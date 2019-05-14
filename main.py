@@ -175,6 +175,8 @@ def main():
     train_loader, test_loader = build_dataset()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    print('==> GPU: ' + str(torch.cuda.is_available()))
+
     ckpt_name = get_ckpt_name(model=args.model, optimizer=args.optim, lr=args.lr,
                               final_lr=args.final_lr, momentum=args.momentum,
                               beta1=args.beta1, beta2=args.beta2, gamma=args.gamma)
