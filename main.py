@@ -32,6 +32,9 @@ def get_parser():
     parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
     parser.add_argument('--weight_decay', default=5e-4, type=float,
                         help='weight decay for optimizers')
+
+    parser.add_argument('--kdim', default=32, type=int, help='dimension of attention keys')
+
     return parser
 
 
@@ -86,7 +89,7 @@ def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
         'multi_resnet': multi_resnet34,
-    }[args.model]()
+    }[args.model](args.kdim)
     net = net.to(device)
     if device == 'cuda':
         net = nn.DataParallel(net)

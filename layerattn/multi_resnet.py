@@ -85,7 +85,7 @@ class LayerAttention(nn.Module):
 
 
 class MultiResNet(nn.Module):
-    def __init__(self, res_block, n_blocks, n_classes=10):
+    def __init__(self, res_block, n_blocks, kdim, n_classes=10):
         super().__init__()
         self.in_channels = 64
 
@@ -98,7 +98,7 @@ class MultiResNet(nn.Module):
             nn.ReLU()
         )
 
-        self.layer_attn = LayerAttention(512, res_block.expansion)
+        self.layer_attn = LayerAttention(kdim, self.expansion)
 
         projs = dict()
         if self.expansion != 1:
@@ -114,8 +114,8 @@ class MultiResNet(nn.Module):
             )
         self.projs = nn.ModuleDict(projs)
 
-        self.q_proj = nn.Linear(512 * self.expansion, 512)
-        self.k_proj = nn.Linear(512 * self.expansion, 512)
+        self.q_proj = nn.Linear(512 * self.expansion, kdim)
+        self.k_proj = nn.Linear(512 * self.expansion, kdim)
 
         self.residuals = nn.ModuleList([])
         self.residuals.extend(self.create_res_blocks(res_block, 64, n_blocks[0], stride=1))
@@ -169,8 +169,8 @@ class MultiResNet(nn.Module):
         return self.q_proj(self.projs_x(feature_map))
 
 
-def multi_resnet34():
-    return MultiResNet(BasicResidualBlock, [3, 4, 6, 3])
+def multi_resnet34(kdim=32):
+    return MultiResNet(BasicResidualBlock, [3, 4, 6, 3], kdim)
 
 
 class BasicBlock(nn.Module):
