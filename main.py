@@ -34,6 +34,9 @@ def get_parser():
                         help='weight decay for optimizers')
 
     parser.add_argument('--kdim', default=32, type=int, help='dimension of attention keys')
+    parser.add_argument('--mem_strategy', default='all', type=str,
+                        help='the stategy of restoring the memory for attention',
+                        choices=['all', 'one', 'two', 'same_dim'])
 
     return parser
 
@@ -89,7 +92,7 @@ def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
         'multi_resnet': multi_resnet34,
-    }[args.model](args.kdim)
+    }[args.model](args.kdim, args.mem_strategy)
     net = net.to(device)
     if device == 'cuda':
         net = nn.DataParallel(net)

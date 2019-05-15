@@ -125,8 +125,11 @@ class LayerAttention(nn.Module):
 
 
 class MultiResNet(nn.Module):
-    def __init__(self, res_block, n_blocks, kdim, n_classes=10):
+    def __init__(self, res_block, n_blocks, kdim, n_classes=10, mem_strategy='all'):
         super().__init__()
+        assert mem_strategy in ['all', 'one', 'two', 'same_dim']
+        self.mem_strategy = mem_strategy
+
         self.in_channels = 64
 
         self.expansion = res_block.expansion
@@ -164,7 +167,16 @@ class MultiResNet(nn.Module):
             residual = res(x)
             x = residual + self.layer_attn(x, key_value, residual)
             x = F.relu(x)
-            key_value.append(x)
+
+            if self.mem_strategy == 'all':
+                key_value.append(x)
+            elif self.mem_strategy == 'one':
+                key_value = [x]
+            elif self.mem_strategy == 'two':
+                key_value = [key_value[-1], x]
+            elif self.mem_strategy == 'same_dim':
+                # todo
+                pass
 
         x = F.avg_pool2d(x, 4).view(x.size(0), -1)
         x = self.out_linear(x)
@@ -172,8 +184,8 @@ class MultiResNet(nn.Module):
         return x
 
 
-def multi_resnet34(kdim=32):
-    return MultiResNet(BasicResidualBlock, [3, 4, 6, 3], kdim)
+def multi_resnet34(kdim, mem_strategy):
+    return MultiResNet(BasicResidualBlock, [3, 4, 6, 3], kdim, mem_strategy=mem_strategy)
 
 
 class BasicBlock(nn.Module):
