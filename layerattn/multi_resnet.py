@@ -33,17 +33,17 @@ class LayerAttention(nn.Module):
 
         shortcuts = dict()
         if expansion != 1:
-            shortcuts['64'] = nn.Sequential(
-                nn.Conv2d(64, 64 * expansion, kernel_size=1, stride=1, bias=False),
-                nn.BatchNorm2d(64 * expansion)
-            )
-        for channels in [64, 128, 256, 512]:
-            shortcuts[str(channels * expansion)] = nn.Sequential(
-                nn.Conv2d(channels * expansion, channels * expansion * 2, kernel_size=1, stride=2,
-                          bias=False),
-                nn.BatchNorm2d(channels * expansion * 2)
-            )
+            shortcuts['64'] = nn.Conv2d(64, 64 * expansion, kernel_size=1, stride=1, bias=False)
+        for channels in [64, 128, 256]:
+            shortcuts[str(channels * expansion)] = nn.Conv2d(channels * expansion,
+                                                             channels * expansion * 2,
+                                                             kernel_size=1, stride=2,
+                                                             bias=False)
         self.shortcuts = nn.ModuleDict(shortcuts)
+
+        self.batch_norms = nn.ModuleDict({
+            str(c): nn.BatchNorm2d(c * expansion) for c in [64, 128, 256, 512]
+        })
 
         self.q_proj = nn.Linear(512 * expansion, kdim)
         self.k_proj = nn.Linear(512 * expansion, kdim)
@@ -91,6 +91,7 @@ class LayerAttention(nn.Module):
             while in_channels != channels:
                 v = self.shortcuts[str(in_channels)](v)
                 in_channels = v.size(1)
+            v = self.batch_norms[str(channels)](v)
             v = v.view(bsz, -1)
             assert list(v.size()) == [bsz, channels * height * width]
 
@@ -169,25 +170,6 @@ class MultiResNet(nn.Module):
         x = self.out_linear(x)
 
         return x
-
-    def projs_x(self, feature_map):
-        bsz, in_channels, _, _ = feature_map.size()
-
-        while in_channels != 512 * self.expansion:
-            feature_map = self.projs[str(in_channels)](feature_map)
-            in_channels = feature_map.size(1)
-
-        out = F.avg_pool2d(feature_map, 4)
-        out = out.view(bsz, -1)
-        assert list(out.size()) == [bsz, 512 * self.expansion]
-
-        return out
-
-    def proj_k(self, feature_map):
-        return self.k_proj(self.projs_x(feature_map))
-
-    def proj_q(self, feature_map):
-        return self.q_proj(self.projs_x(feature_map))
 
 
 def multi_resnet34(kdim=32):
