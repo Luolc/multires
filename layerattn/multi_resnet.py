@@ -25,9 +25,11 @@ class BasicResidualBlock(nn.Module):
 
 
 class LayerAttention(nn.Module):
-    def __init__(self, kdim, expansion=1):
+    def __init__(self, kdim, expansion=1, qk_same=True):
         super().__init__()
         self.kdim = kdim
+        self.expansion = expansion
+        self.qk_same = qk_same
 
         shortcuts = dict()
         if expansion != 1:
@@ -43,19 +45,37 @@ class LayerAttention(nn.Module):
             )
         self.shortcuts = nn.ModuleDict(shortcuts)
 
+        self.q_proj = nn.Linear(512 * expansion, kdim)
+        self.k_proj = nn.Linear(512 * expansion, kdim)
+
+        if qk_same:
+            self.k_proj.weight = self.q_proj.weight
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.qk_same:
+            nn.init.xavier_uniform_(self.q_proj.weight)
+            nn.init.constant_(self.q_proj.bias, 0.)
+        else:
+            nn.init.xavier_uniform_(self.q_proj.weight)
+            nn.init.xavier_uniform_(self.k_proj.weight)
+            nn.init.constant_(self.q_proj.bias, 0.)
+            nn.init.constant_(self.k_proj.bias, 0.)
+
     def forward(self, query, key_value, residual):
-        bsz, kdim = query.size()
+        q = self.proj_q(query)
+        bsz, kdim = q.size()
         assert kdim == self.kdim
-        assert list(query.size()) == [bsz, kdim]
-        assert all(list(k.size()) == [bsz, kdim] for k, _ in key_value)
+        assert list(q.size()) == [bsz, kdim]
+        q = q.view(bsz, kdim, 1)
 
-        query = query.view(bsz, kdim, 1)
-        # the keys of previous layers with shape (bsz, n_layers, kdim)
-        key = torch.stack([k for k, _ in key_value], dim=1)
-        attn_weights = torch.bmm(key, query).view(bsz, -1)
         n_layers = len(key_value)
-        assert list(attn_weights.size()) == [bsz, n_layers]
+        # the keys of previous layers with shape (bsz, n_layers, kdim)
+        key = torch.stack([self.proj_k(k) for k in key_value], dim=1)
+        assert list(key.size()) == [bsz, n_layers, kdim]
 
+        attn_weights = torch.bmm(key, q).view(bsz, -1)
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as(attn_weights)
         attn_weights = attn_weights.view(bsz, n_layers, 1)
 
@@ -64,7 +84,7 @@ class LayerAttention(nn.Module):
         assert list(residual.size()) == [bsz, channels, height, width]
 
         values = []
-        for _, v in key_value:
+        for v in key_value:
             bsz_value, in_channels, _, _ = v.size()
             assert bsz_value == bsz
 
@@ -83,6 +103,25 @@ class LayerAttention(nn.Module):
 
         return attn
 
+    def prepare_proj_qk(self, feature_map):
+        bsz, in_channels, _, _ = feature_map.size()
+
+        while in_channels != 512 * self.expansion:
+            feature_map = self.shortcuts[str(in_channels)](feature_map)
+            in_channels = feature_map.size(1)
+
+        out = F.avg_pool2d(feature_map, 4)
+        out = out.view(bsz, -1)
+        assert list(out.size()) == [bsz, 512 * self.expansion]
+
+        return out
+
+    def proj_q(self, feature_map):
+        return self.q_proj(self.prepare_proj_qk(feature_map))
+
+    def proj_k(self, feature_map):
+        return self.k_proj(self.prepare_proj_qk(feature_map))
+
 
 class MultiResNet(nn.Module):
     def __init__(self, res_block, n_blocks, kdim, n_classes=10):
@@ -98,24 +137,7 @@ class MultiResNet(nn.Module):
             nn.ReLU()
         )
 
-        self.layer_attn = LayerAttention(kdim, self.expansion)
-
-        projs = dict()
-        if self.expansion != 1:
-            projs['64'] = nn.Sequential(
-                nn.Conv2d(64, 64 * self.expansion, kernel_size=1, stride=1, bias=False),
-                nn.BatchNorm2d(64 * self.expansion)
-            )
-        for channels in [64, 128, 256, 512]:
-            projs[str(channels * self.expansion)] = nn.Sequential(
-                nn.Conv2d(channels * self.expansion, channels * self.expansion * 2,
-                          kernel_size=1, stride=2, bias=False),
-                nn.BatchNorm2d(channels * self.expansion * 2)
-            )
-        self.projs = nn.ModuleDict(projs)
-
-        self.q_proj = nn.Linear(512 * self.expansion, kdim)
-        self.k_proj = nn.Linear(512 * self.expansion, kdim)
+        self.layer_attn = LayerAttention(kdim, self.expansion, qk_same=True)
 
         self.residuals = nn.ModuleList([])
         self.residuals.extend(self.create_res_blocks(res_block, 64, n_blocks[0], stride=1))
@@ -135,14 +157,13 @@ class MultiResNet(nn.Module):
 
     def forward(self, x):
         x = self.entrance(x)
-        key_value = [(self.proj_k(x), x)]
+        key_value = [x]
 
         for res in self.residuals:
-            query = self.proj_q(x)
             residual = res(x)
-            x = residual + self.layer_attn(query, key_value, residual)
+            x = residual + self.layer_attn(x, key_value, residual)
             x = F.relu(x)
-            key_value.append((self.proj_k(x), x))
+            key_value.append(x)
 
         x = F.avg_pool2d(x, 4).view(x.size(0), -1)
         x = self.out_linear(x)
