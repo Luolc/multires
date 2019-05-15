@@ -88,10 +88,15 @@ class LayerAttention(nn.Module):
             bsz_value, in_channels, _, _ = v.size()
             assert bsz_value == bsz
 
+            need_batch_norm = False
             while in_channels != channels:
+                need_batch_norm = True
                 v = self.shortcuts[str(in_channels)](v)
                 in_channels = v.size(1)
-            v = self.batch_norms[str(channels)](v)
+
+            if need_batch_norm:
+                v = self.batch_norms[str(channels)](v)
+
             v = v.view(bsz, -1)
             assert list(v.size()) == [bsz, channels * height * width]
 
@@ -105,11 +110,11 @@ class LayerAttention(nn.Module):
         return attn
 
     def prepare_proj_qk(self, feature_map):
-        bsz, in_channels, _, _ = feature_map.size()
+        bsz, channels, _, _ = feature_map.size()
 
-        while in_channels != 512 * self.expansion:
-            feature_map = self.shortcuts[str(in_channels)](feature_map)
-            in_channels = feature_map.size(1)
+        while channels != 512 * self.expansion:
+            feature_map = self.shortcuts[str(channels)](feature_map)
+            channels = feature_map.size(1)
 
         out = F.avg_pool2d(feature_map, 4)
         out = out.view(bsz, -1)
@@ -133,7 +138,6 @@ class MultiResNet(nn.Module):
         self.in_channels = 64
 
         self.expansion = res_block.expansion
-        self.n_blocks = n_blocks
 
         self.entrance = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
