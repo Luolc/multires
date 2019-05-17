@@ -99,7 +99,7 @@ def load_checkpoint(ckpt_name):
 def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
-        'multi_resnet': multi_resnet34(args.kdim, args.mem_strategy),
+        'multi_resnet': multi_resnet32(args.kdim, args.mem_strategy),
         'resnet': resnet32(),
     }[args.model]
     net = net.to(device)
@@ -208,7 +208,7 @@ def main():
     net = build_model(args, device, ckpt=ckpt)
     criterion = nn.CrossEntropyLoss()
     optimizer = create_optimizer(args, net.parameters())
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[75, 100], gamma=0.1,
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 100], gamma=0.1,
                                                last_epoch=start_epoch)
 
     train_accuracies = []

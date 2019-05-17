@@ -33,8 +33,8 @@ class LayerAttention(nn.Module):
 
         shortcuts = dict()
         if expansion != 1:
-            shortcuts['64'] = nn.Conv2d(64, 64 * expansion, kernel_size=1, stride=1, bias=False)
-        for channels in [64, 128, 256]:
+            shortcuts['16'] = nn.Conv2d(16, 16 * expansion, kernel_size=1, stride=1, bias=False)
+        for channels in [16, 32]:
             shortcuts[str(channels * expansion)] = nn.Conv2d(channels * expansion,
                                                              channels * expansion * 2,
                                                              kernel_size=1, stride=2,
@@ -42,11 +42,11 @@ class LayerAttention(nn.Module):
         self.shortcuts = nn.ModuleDict(shortcuts)
 
         self.batch_norms = nn.ModuleDict({
-            str(c): nn.BatchNorm2d(c * expansion) for c in [64, 128, 256, 512]
+            str(c): nn.BatchNorm2d(c * expansion) for c in [16, 32, 64]
         })
 
-        self.q_proj = nn.Linear(512 * expansion, kdim)
-        self.k_proj = nn.Linear(512 * expansion, kdim)
+        self.q_proj = nn.Linear(64 * expansion, kdim)
+        self.k_proj = nn.Linear(64 * expansion, kdim)
 
         if qk_same:
             self.k_proj.weight = self.q_proj.weight
@@ -112,13 +112,13 @@ class LayerAttention(nn.Module):
     def prepare_proj_qk(self, feature_map):
         bsz, channels, _, _ = feature_map.size()
 
-        while channels != 512 * self.expansion:
+        while channels != 64 * self.expansion:
             feature_map = self.shortcuts[str(channels)](feature_map)
             channels = feature_map.size(1)
 
-        out = F.avg_pool2d(feature_map, 4)
+        out = F.avg_pool2d(feature_map, 8)
         out = out.view(bsz, -1)
-        assert list(out.size()) == [bsz, 512 * self.expansion]
+        assert list(out.size()) == [bsz, 64 * self.expansion]
 
         return out
 
@@ -133,27 +133,26 @@ class MultiResNet(nn.Module):
     def __init__(self, res_block, n_blocks, kdim, n_classes=10, mem_strategy='all'):
         super().__init__()
         assert mem_strategy in ['all', 'one', 'two', 'same_dim']
+
         self.mem_strategy = mem_strategy
-
-        self.in_channels = 64
-
         self.expansion = res_block.expansion
 
+        self.in_channels = 16
+
         self.entrance = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(16),
             nn.ReLU()
         )
 
         self.layer_attn = LayerAttention(kdim, self.expansion, qk_same=True)
 
         self.residuals = nn.ModuleList([])
-        self.residuals.extend(self.create_res_blocks(res_block, 64, n_blocks[0], stride=1))
-        self.residuals.extend(self.create_res_blocks(res_block, 128, n_blocks[1], stride=2))
-        self.residuals.extend(self.create_res_blocks(res_block, 256, n_blocks[2], stride=2))
-        self.residuals.extend(self.create_res_blocks(res_block, 512, n_blocks[3], stride=2))
+        self.residuals.extend(self.create_res_blocks(res_block, 16, n_blocks[0], stride=1))
+        self.residuals.extend(self.create_res_blocks(res_block, 32, n_blocks[1], stride=2))
+        self.residuals.extend(self.create_res_blocks(res_block, 64, n_blocks[2], stride=2))
 
-        self.out_linear = nn.Linear(512 * self.expansion, n_classes)
+        self.out_linear = nn.Linear(64 * self.expansion, n_classes)
 
     def create_res_blocks(self, res_block, channels, n_blocks, stride):
         strides = [stride] + [1] * (n_blocks - 1)
@@ -182,11 +181,11 @@ class MultiResNet(nn.Module):
                 # todo
                 pass
 
-        x = F.avg_pool2d(x, 4).view(x.size(0), -1)
+        x = F.avg_pool2d(x, 8).view(x.size(0), -1)
         x = self.out_linear(x)
 
         return x
 
 
-def multi_resnet34(kdim, mem_strategy):
-    return MultiResNet(BasicResidualBlock, [3, 4, 6, 3], kdim, mem_strategy=mem_strategy)
+def multi_resnet32(kdim, mem_strategy):
+    return MultiResNet(BasicResidualBlock, [5, 5, 5], kdim, mem_strategy=mem_strategy)
