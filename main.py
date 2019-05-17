@@ -17,10 +17,12 @@ from adabound import AdaBound
 
 def get_parser():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+    parser.add_argument('--tag', default='', type=str, help='extra tag for checkpoint')
     parser.add_argument('--model', default='multi_resnet', type=str, help='model',
                         choices=['multi_resnet'])
     parser.add_argument('--optim', default='sgd', type=str, help='optimizer',
                         choices=['sgd', 'adagrad', 'adam', 'amsgrad', 'adabound', 'amsbound'])
+    parser.add_argument('--train_bsz', default=128, type=int, help='training batch size')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
     parser.add_argument('--final_lr', default=0.1, type=float,
                         help='final learning rate of AdaBound')
@@ -41,7 +43,7 @@ def get_parser():
     return parser
 
 
-def build_dataset():
+def build_dataset(args):
     print('==> Preparing data..')
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
@@ -57,7 +59,7 @@ def build_dataset():
 
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
                                             transform=transform_train)
-    train_loader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True,
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.train_bsz, shuffle=True,
                                                num_workers=2)
 
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True,
@@ -67,7 +69,7 @@ def build_dataset():
     return train_loader, test_loader
 
 
-def get_ckpt_name(model='multi_resnet', optimizer='sgd', lr=0.1, final_lr=0.1, momentum=0.9,
+def get_ckpt_name(tag='', model='multi_resnet', optimizer='sgd', lr=0.1, final_lr=0.1, momentum=0.9,
                   beta1=0.9, beta2=0.999, gamma=1e-3):
     name = {
         'sgd': 'lr{}-momentum{}'.format(lr, momentum),
@@ -77,7 +79,12 @@ def get_ckpt_name(model='multi_resnet', optimizer='sgd', lr=0.1, final_lr=0.1, m
         'adabound': 'lr{}-betas{}-{}-final_lr{}-gamma{}'.format(lr, beta1, beta2, final_lr, gamma),
         'amsbound': 'lr{}-betas{}-{}-final_lr{}-gamma{}'.format(lr, beta1, beta2, final_lr, gamma),
     }[optimizer]
-    return '{}-{}-{}'.format(model, optimizer, name)
+    name = '{}-{}-{}'.format(model, optimizer, name)
+
+    if tag:
+        name += '-' + tag
+
+    return name
 
 
 def load_checkpoint(ckpt_name):
@@ -178,7 +185,7 @@ def main():
     parser = get_parser()
     args = parser.parse_args()
 
-    train_loader, test_loader = build_dataset()
+    train_loader, test_loader = build_dataset(args)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print('==> GPU: ' + str(torch.cuda.is_available()))
