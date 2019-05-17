@@ -100,7 +100,7 @@ def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
         'multi_resnet': multi_resnet34(args.kdim, args.mem_strategy),
-        'resnet': resnet34(),
+        'resnet': resnet32(),
     }[args.model]
     net = net.to(device)
     if device == 'cuda':
