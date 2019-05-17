@@ -20,7 +20,7 @@ def get_parser():
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     parser.add_argument('--tag', default='', type=str, help='extra tag for checkpoint')
     parser.add_argument('--model', default='multi_resnet', type=str, help='model',
-                        choices=['multi_resnet'])
+                        choices=['multi_resnet', 'resnet'])
     parser.add_argument('--optim', default='sgd', type=str, help='optimizer',
                         choices=['sgd', 'adagrad', 'adam', 'amsgrad', 'adabound', 'amsbound'])
     parser.add_argument('--train_bsz', default=128, type=int, help='training batch size')
@@ -100,6 +100,7 @@ def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
         'multi_resnet': multi_resnet34(args.kdim, args.mem_strategy),
+        'resnet': resnet34(),
     }[args.model]
     net = net.to(device)
     if device == 'cuda':
