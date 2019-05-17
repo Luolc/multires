@@ -10,6 +10,7 @@ import torchvision.transforms as transforms
 
 import os
 import argparse
+import time
 
 from layerattn import *
 from adabound import AdaBound
@@ -70,7 +71,7 @@ def build_dataset(args):
 
 
 def get_ckpt_name(tag='', model='multi_resnet', optimizer='sgd', lr=0.1, final_lr=0.1, momentum=0.9,
-                  beta1=0.9, beta2=0.999, gamma=1e-3):
+                  beta1=0.9, beta2=0.999, gamma=1e-3, mem_strategy='all'):
     name = {
         'sgd': 'lr{}-momentum{}'.format(lr, momentum),
         'adagrad': 'lr{}'.format(lr),
@@ -79,7 +80,7 @@ def get_ckpt_name(tag='', model='multi_resnet', optimizer='sgd', lr=0.1, final_l
         'adabound': 'lr{}-betas{}-{}-final_lr{}-gamma{}'.format(lr, beta1, beta2, final_lr, gamma),
         'amsbound': 'lr{}-betas{}-{}-final_lr{}-gamma{}'.format(lr, beta1, beta2, final_lr, gamma),
     }[optimizer]
-    name = '{}-{}-{}'.format(model, optimizer, name)
+    name = '{}-{}-{}-mem_{}'.format(model, optimizer, name, mem_strategy)
 
     if tag:
         name += '-' + tag
@@ -98,8 +99,8 @@ def load_checkpoint(ckpt_name):
 def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
-        'multi_resnet': multi_resnet34,
-    }[args.model](args.kdim, args.mem_strategy)
+        'multi_resnet': multi_resnet34(args.kdim, args.mem_strategy),
+    }[args.model]
     net = net.to(device)
     if device == 'cuda':
         net = nn.DataParallel(net)
@@ -154,7 +155,7 @@ def train(net, epoch, device, data_loader, optimizer, criterion):
         correct += predicted.eq(targets).sum().item()
 
     accuracy = 100. * correct / total
-    print('train acc %.3f' % accuracy)
+    print('train acc %.3f --- error %06.3f' % (accuracy, 100 - accuracy))
 
     return accuracy
 
@@ -176,7 +177,7 @@ def evaluate(net, device, data_loader, criterion):
             correct += predicted.eq(targets).sum().item()
 
     accuracy = 100. * correct / total
-    print(' test acc %.3f' % accuracy)
+    print(' test acc %.3f --- error %06.3f' % (accuracy, 100 - accuracy))
 
     return accuracy
 
@@ -190,9 +191,10 @@ def main():
 
     print('==> GPU: ' + str(torch.cuda.is_available()))
 
-    ckpt_name = get_ckpt_name(model=args.model, optimizer=args.optim, lr=args.lr,
+    ckpt_name = get_ckpt_name(tag=args.tag, model=args.model, optimizer=args.optim, lr=args.lr,
                               final_lr=args.final_lr, momentum=args.momentum,
-                              beta1=args.beta1, beta2=args.beta2, gamma=args.gamma)
+                              beta1=args.beta1, beta2=args.beta2, gamma=args.gamma,
+                              mem_strategy=args.mem_strategy)
     if args.resume:
         ckpt = load_checkpoint(ckpt_name)
         best_acc = ckpt['acc']
@@ -205,13 +207,14 @@ def main():
     net = build_model(args, device, ckpt=ckpt)
     criterion = nn.CrossEntropyLoss()
     optimizer = create_optimizer(args, net.parameters())
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.1,
-                                          last_epoch=start_epoch)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[75, 100], gamma=0.1,
+                                               last_epoch=start_epoch)
 
     train_accuracies = []
     test_accuracies = []
 
-    for epoch in range(start_epoch + 1, 200):
+    for epoch in range(start_epoch + 1, 150):
+        start_time = time.time()
         scheduler.step()
         train_acc = train(net, epoch, device, train_loader, optimizer, criterion)
         test_acc = evaluate(net, device, test_loader, criterion)
@@ -235,6 +238,9 @@ def main():
             os.mkdir('curve')
         torch.save({'train_acc': train_accuracies, 'test_acc': test_accuracies},
                    os.path.join('curve', ckpt_name))
+
+        elapsed_time = int(time.time() - start_time)
+        print('[time] {:02d}:{:02d}'.format(elapsed_time // 60, elapsed_time % 60))
 
 
 if __name__ == '__main__':
