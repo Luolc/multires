@@ -24,12 +24,31 @@ class BasicResidualBlock(nn.Module):
         return out
 
 
+class BasicPreActResidualBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_channels, channels, stride=1):
+        super().__init__()
+
+        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=3, stride=stride, padding=1,
+                               bias=False)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False)
+
+    def forward(self, x):
+        x = self.conv1(F.relu(self.bn1(x)))
+        x = self.conv2(F.relu(self.bn2(x)))
+        return x
+
+
 class LayerAttention(nn.Module):
-    def __init__(self, kdim, expansion=1, qk_same=True):
+    def __init__(self, kdim, expansion=1, qk_same=True, pre_act=False):
         super().__init__()
         self.kdim = kdim
         self.expansion = expansion
         self.qk_same = qk_same
+        self.pre_act = pre_act
 
         shortcuts = dict()
         if expansion != 1:
@@ -84,18 +103,18 @@ class LayerAttention(nn.Module):
         assert list(residual.size()) == [bsz, channels, height, width]
 
         values = []
+        need_batch_norm = False
         for v in key_value:
             bsz_value, in_channels, _, _ = v.size()
             assert bsz_value == bsz
 
-            need_batch_norm = False
             while in_channels != channels:
                 need_batch_norm = True
                 v = self.shortcuts[str(in_channels)](v)
                 in_channels = v.size(1)
 
-            if need_batch_norm:
-                v = self.batch_norms[str(channels)](v)
+            # if need_batch_norm:
+            #     v = self.batch_norms[str(channels)](v)
 
             v = v.view(bsz, -1)
             assert list(v.size()) == [bsz, channels * height * width]
@@ -106,6 +125,8 @@ class LayerAttention(nn.Module):
         values = torch.stack(values, dim=-1)
 
         attn = torch.bmm(values, attn_weights).view(bsz, channels, height, width)
+        if need_batch_norm and not self.pre_act:
+            attn = self.batch_norms[str(channels)](attn)
 
         return attn
 
@@ -130,10 +151,11 @@ class LayerAttention(nn.Module):
 
 
 class MultiResNet(nn.Module):
-    def __init__(self, res_block, n_blocks, kdim, n_classes=10, mem_strategy='all'):
+    def __init__(self, res_block, n_blocks, kdim, n_classes=10, mem_strategy='all', pre_act=False):
         super().__init__()
         assert mem_strategy in ['all', 'one', 'two', 'same_dim']
 
+        self.pre_act = pre_act
         self.mem_strategy = mem_strategy
         self.expansion = res_block.expansion
 
@@ -169,7 +191,8 @@ class MultiResNet(nn.Module):
         for res in self.residuals:
             residual = res(x)
             x = residual + self.layer_attn(x, key_value, residual)
-            x = F.relu(x)
+            if not self.pre_act:
+                x = F.relu(x)
 
             if self.mem_strategy == 'all':
                 key_value.append(x)
@@ -178,13 +201,29 @@ class MultiResNet(nn.Module):
             elif self.mem_strategy == 'two':
                 key_value = [key_value[-1], x]
             elif self.mem_strategy == 'same_dim':
-                # todo
-                pass
+                if x.size(1) != key_value[-1].size(1):
+                    key_value = [x]
+                else:
+                    key_value.append(x)
 
         x = F.avg_pool2d(x, 8).view(x.size(0), -1)
         x = self.out_linear(x)
 
         return x
+
+
+def multi_resnet(n_layers, kdim, mem_strategy, pre_act):
+    if (n_layers - 2) % 6 != 0:
+        raise 'cannot create Multistep ResNet with {} layers'.format(n_layers)
+
+    n = (n_layers - 2) // 6
+
+    if pre_act:
+        block = BasicPreActResidualBlock
+    else:
+        block = BasicResidualBlock
+
+    return MultiResNet(block, [n, n, n], kdim, mem_strategy=mem_strategy, pre_act=pre_act)
 
 
 def multi_resnet32(kdim, mem_strategy):

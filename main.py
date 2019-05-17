@@ -36,6 +36,8 @@ def get_parser():
     parser.add_argument('--weight_decay', default=5e-4, type=float,
                         help='weight decay for optimizers')
 
+    parser.add_argument('--n_layers', default=32, type=int, help='the number of layers')
+    parser.add_argument('--pre_act', action='store_true', help='whether to use pre-activation')
     parser.add_argument('--kdim', default=32, type=int, help='dimension of attention keys')
     parser.add_argument('--mem_strategy', default='all', type=str,
                         help='the stategy of restoring the memory for attention',
@@ -99,7 +101,7 @@ def load_checkpoint(ckpt_name):
 def build_model(args, device, ckpt=None):
     print('==> Building model..')
     net = {
-        'multi_resnet': multi_resnet32(args.kdim, args.mem_strategy),
+        'multi_resnet': multi_resnet(args.n_layers, args.kdim, args.mem_strategy, args.pre_act),
         'resnet': resnet32(),
     }[args.model]
     net = net.to(device)
@@ -208,7 +210,7 @@ def main():
     net = build_model(args, device, ckpt=ckpt)
     criterion = nn.CrossEntropyLoss()
     optimizer = create_optimizer(args, net.parameters())
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 100], gamma=0.1,
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 75, 100], gamma=0.25,
                                                last_epoch=start_epoch)
 
     train_accuracies = []
